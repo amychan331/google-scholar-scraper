@@ -1,0 +1,3 @@
+name = GS Scraper
+description = Scraps Google Scholar data and either create or update the requested node
+core = 7.x

@@ -1,0 +1,90 @@
+<?php
+
+/**
+ *  @file
+ *  Scraps scientific article data from Google Scholar and either create or update a node.
+ *
+ *  @param string  $link the domain link use for the complete Google Scholar url
+ *  @param string  $query the query use for the complete Google Scholar url
+ *  @param string  $alias the alias link of the content page that will list out the scientific articles
+ *
+**/
+
+define('LINK', 'https://scholar.google.com/scholar?q=');
+define('QUERY', '');
+define('ALIAS', 'google-scholar'); // If unsure of alias, admin can check Configuration -> "URL aliases" for existing alias & alias pattern
+
+/**
+ * Implementation of hook_menu().
+ */
+function gs_scraper_cron() {
+    $interval =  7 * 24 * 60 * 60; // 7 days * 24 hr * 60 min * 60 sec
+    $date = date("Y-m-d H:i:s", time());
+    if ((time() - variable_get('interval ', 0)) > $interval ) {
+        $bodytext = scraper(LINK . QUERY);
+        if ($bodytext) {
+            update_node($bodytext);
+        }
+        variable_set('interval ', time());
+    }
+}
+
+/**
+ * Returns HTML text with contents scrapped from Google Scholar
+ */
+function scraper($url){
+    $curl = curl_init();
+    curl_setopt($curl, CURLOPT_URL, $url);
+    curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($curl, CURLOPT_RETURNTRANSFER, 1);
+    $results = curl_exec ($curl);
+
+    $formatted = "<em>Content below is automatically extracted from <a href='" . $url . "'>Google Scholar</a> on " . date("F j, Y, g:i a") . ".</em><br />";
+
+    preg_match_all('/<div class="gs_r">(.*?)<div class="gs_fl">/si', $results, $matches);
+    foreach ($matches[0] as $m) {
+        preg_match('/<h3 class="gs_rt">(.*?)<\/h3>/si', $m, $title);
+        preg_match('/<div class="gs_a">(.*?)<\/div>/si', $m, $citation);
+        preg_match('/<div class="gs_rs">(.*?)<\/div>/si', $m, $description);
+
+        $formatted .= "<p>";
+        $title = preg_replace("/<span[^>]+\>(.*)<\/span>/i", "", $title[1]);
+        $formatted .= "<strong>" . strip_tags($title, '<a>'). "</strong><br />";
+        $formatted .= "<em>" . utf8_encode(strip_tags($citation[0])) . "</em><br />";
+        $formatted .= htmlspecialchars(strip_tags($description[0])) . "...";
+        $formatted .= "</p>";
+    }
+
+    curl_close($curl);
+    return $formatted;
+}
+
+/**
+ * Create or update content node with HTML text from scraper() after checking if path alias exists
+ */
+function update_node($bodytext) {
+    $path = drupal_get_normal_path(ALIAS);
+
+    // If alias is not found, $nid will return the $alias value entered.
+    // In such case, create new node:
+    if ($path == ALIAS) {
+        $node = new stdClass();
+        $node->title = "Google Scholar";
+        $node->type = "page";
+        $node->language = LANGUAGE_NONE;
+        node_object_prepare($node);
+
+        $node->status = 1;
+        $node->path['pathauto'] = TRUE;
+    } else {
+        $patharray = explode("/", $path);
+        $nid = end($patharray);
+        $node = node_load($nid);
+    }
+
+    $node->body[$node->language][0]['value']   = $bodytext;
+    $node->body[$node->language][0]['format']  = 'full_html';
+
+    $node = node_submit($node);
+    node_save($node);
+}
